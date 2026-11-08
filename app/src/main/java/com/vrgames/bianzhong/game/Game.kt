@@ -9,7 +9,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import com.vrgames.bianzhong.core.BellKind
+import com.vrgames.bianzhong.core.BellTopics
 import com.vrgames.bianzhong.core.Judge
+import com.vrgames.bianzhong.core.Practice
 import com.vrgames.bianzhong.core.Levels
 import com.vrgames.bianzhong.core.Note
 import com.vrgames.bianzhong.core.Part
@@ -34,7 +37,7 @@ object Game {
     private const val PREFS = "bianzhong"
     private const val TAG = "BellGame"
 
-    enum class Phase { CARD, INTRO, TUTORIAL, RESTORE, COUNTIN, SONG, RESULT, FREE, SHOW }
+    enum class Phase { CARD, INTRO, TUTORIAL, PRACTICE, RESTORE, COUNTIN, SONG, RESULT, FREE, SHOW, EXHIBIT }
 
     val lock = Any()
     private val main = Handler(Looper.getMainLooper())
@@ -50,6 +53,17 @@ object Game {
     var speed by mutableStateOf(1.0); private set
 
     var phase by mutableStateOf(Phase.CARD)
+    /** The two-bell warm-up before the restore chapter. */
+    var practice by mutableStateOf<Practice?>(null); private set
+    /** Which topic the bell exhibit shows. */
+    var topicIndex by mutableStateOf(0); private set
+    val topic get() = BellTopics.ALL[topicIndex]
+    /** The narration clip now playing, or null. */
+    var speaking by mutableStateOf<String?>(null); private set
+    private var narrator: android.media.MediaPlayer? = null
+    private var appContext: android.content.Context? = null
+    /** Strokes accept the right bell at either part; on by default, off for players who want it strict. */
+    var partAssist by mutableStateOf(true)
     var version by mutableIntStateOf(0); private set
     var note by mutableStateOf<String?>(null)
     var noteVersion by mutableIntStateOf(0); private set
@@ -98,6 +112,7 @@ object Game {
     }
 
     fun init(context: Context) {
+        appContext = context.applicationContext
         if (prefs != null) return
         prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).also { p ->
             musicOn = p.getBoolean("music", true)
@@ -171,9 +186,15 @@ object Game {
                 val r = Restore()
                 restore = r
                 view?.lookAlike(r.goal.toSet())
-                hangRestore()
-                phase = Phase.RESTORE
-                say("捏一下钟听它的音，再捏另一口，两口就换位置。从左到右要由低到高。")
+                view?.clearPitchBars()
+                if (progress.cleared(l.id)) startRestore() else {
+                    // Two bells of the five, in the row's middle, the others hanging where they belong.
+                    val p = Practice(r.goal[1], r.goal[2])
+                    practice = p
+                    hangPractice()
+                    phase = Phase.PRACTICE
+                    say(p.say)
+                }
             }
             else -> {
                 val s = song ?: return
@@ -186,6 +207,85 @@ object Game {
             }
         }
         version++
+    }
+
+    private fun startRestore() {
+        practice = null
+        view?.clearPitchBars()
+        hangRestore()
+        phase = Phase.RESTORE
+        say("捏一下钟听它的音，金色柱子会记下音高。再捏另一口，两口就换位置。要让柱子从左到右一级比一级高。")
+    }
+
+    private fun hangPractice() {
+        val p = practice ?: return
+        val v = view ?: return
+        val r = restore ?: return
+        r.goal.forEachIndexed { k, id -> v.hangAt(id, Rack.tierOf(1).first { it.slot == r.slots[k] }) }
+        val a = r.slots[1]
+        val b = r.slots[2]
+        v.hangAt(p.order[0], Rack.tierOf(1).first { it.slot == a })
+        v.hangAt(p.order[1], Rack.tierOf(1).first { it.slot == b })
+    }
+
+    // ---- The bell exhibit ----
+
+    fun openExhibit() {
+        stopAuto()
+        level = null
+        song = null
+        phase = Phase.EXHIBIT
+        topicIndex = 0
+        view?.showExhibit(true, topic.kind)
+        speak(topic.id)
+        version++
+    }
+
+    fun showTopic(i: Int) {
+        topicIndex = (i + BellTopics.ALL.size) % BellTopics.ALL.size
+        view?.showExhibit(true, topic.kind)
+        speak(topic.id)
+        version++
+    }
+
+    fun closeExhibit() {
+        stopNarration()
+        view?.showExhibit(false, null)
+        toCard()
+    }
+
+    /** A bell on the exhibit stand was pinched: sound it, and turn to its page. */
+    fun pinchExhibit(kind: BellKind, part: Part, at: Long) {
+        val b = Rack.BELLS.first { Rack.kind(it) == kind && (kind != BellKind.YONG || it.tier == 1) }
+        sound?.strike(b, part, at)
+        view?.exhibitStruck(kind)
+        val i = BellTopics.ALL.indexOfFirst { it.kind == kind }
+        if (i >= 0 && i != topicIndex) showTopic(i)
+    }
+
+    fun speak(id: String) {
+        stopNarration()
+        val c = appContext ?: return
+        runCatching {
+            val fd = c.assets.openFd("narration/$id.ogg")
+            narrator = android.media.MediaPlayer().apply {
+                setDataSource(fd.fileDescriptor, fd.startOffset, fd.length)
+                fd.close()
+                setOnCompletionListener { stopNarration() }
+                prepare()
+                start()
+            }
+            speaking = id
+            music?.ducked = true
+        }.onFailure { android.util.Log.i("BellStage", "narration $id: ${it.message}") }
+    }
+
+    fun stopNarration() {
+        runCatching { narrator?.stop() }
+        runCatching { narrator?.release() }
+        narrator = null
+        speaking = null
+        music?.ducked = false
     }
 
     // ---- Pinches ----
@@ -209,10 +309,28 @@ object Game {
                 if (!ok) say(if (step.bell.id != b.id) "不是这一口：看发亮的那口钟。" else if (step.damp) "要趁它还在响的时候捏。" else "这口钟对了，换成${step.part.label}试试。")
                 else if (t.done) finish(t.stars(), 1.0) else say(t.current!!.say)
             }
+            Phase.PRACTICE -> {
+                val p = practice ?: return
+                s?.strike(b, Part.MIDDLE, now)
+                view?.struck(b, Part.MIDDLE, false)
+                if (id in p.order) view?.showPitchBar(b)
+                if (!p.pinch(id)) {
+                    say("捏发亮的那一口钟。")
+                    return
+                }
+                selected = if (p.step == Practice.Step.PICK_HIGH) id else null
+                if (p.done) {
+                    hangPractice()
+                    s?.play(Sfx.SWAP)
+                    say(p.say)
+                    main.postDelayed({ if (phase == Phase.PRACTICE) startRestore() }, 3500)
+                } else say(p.say)
+            }
             Phase.RESTORE -> {
                 val r = restore ?: return
                 s?.strike(b, Part.MIDDLE, now)
                 view?.struck(b, Part.MIDDLE, false)
+                if (id in r.order) view?.showPitchBar(b)
                 val i = r.order.indexOf(id)
                 if (i < 0) {
                     say("这口钟没挂乱。要换的是中层发亮的五口。")
@@ -235,9 +353,10 @@ object Game {
             Phase.SONG, Phase.COUNTIN -> {
                 val p = perf ?: return
                 val t = (at - songStart + calibMs) / 1000.0
-                when (val h = p.hit(t, b, part)) {
+                when (val h = p.hit(t, b, part, partAssist)) {
                     is Performance.Hit.Struck -> {
-                        s?.strike(b, part, now); view?.struck(b, part)
+                        val played = p.notes[h.index].part
+                        s?.strike(b, played, now); view?.struck(b, played)
                         judged(h.judge)
                     }
                     is Performance.Hit.Damped -> {
@@ -480,6 +599,10 @@ object Game {
     }
 
     fun toCard() {
+        stopNarration()
+        view?.showExhibit(false, null)
+        view?.clearPitchBars()
+        practice = null
         stopAuto()
         phase = Phase.CARD
         version++

@@ -28,15 +28,18 @@ class Performance(val song: Song, val speed: Double = 1.0) {
         data class Stray(val why: String?) : Hit
     }
 
-    /** The player pinched [bell] at [part] at time [t]. */
-    fun hit(t: Double, bell: Bell, part: Part): Hit {
+    /**
+     * The player pinched [bell] at time [t]. With [partAssist] the right bell is enough, since a gaze
+     * aimed at a bell's middle or edge is hard to hold at speed; without it [part] has to match too.
+     */
+    fun hit(t: Double, bell: Bell, part: Part, partAssist: Boolean = false): Hit {
         var best = -1
         var bestDt = Double.MAX_VALUE
         for (i in notes.indices) {
             if (judged[i] != null) continue
             val n = notes[i]
             if (n.bell.id != bell.id) continue
-            if (!n.damp && n.part != part) continue
+            if (!n.damp && !partAssist && n.part != part) continue
             val dt = abs(t - n.time)
             if (dt <= GOOD_S && dt < bestDt) {
                 best = i

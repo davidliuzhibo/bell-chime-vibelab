@@ -16,6 +16,14 @@ class Music(context: Context) {
     private var resumed = false
     private var prepared = false
 
+    /** Lowers the music under a spoken clip. */
+    var ducked = false
+        set(v) {
+            field = v
+            val level = if (muted) 0f else if (v) VOLUME * .35f else VOLUME
+            runCatching { player?.setVolume(level, level) }
+        }
+
     var muted = false
         set(v) {
             field = v

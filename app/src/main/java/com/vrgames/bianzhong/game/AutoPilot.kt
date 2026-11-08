@@ -91,6 +91,18 @@ object AutoPilot {
                 }
                 nextStep()
             }
+            Game.Phase.PRACTICE -> {
+                // The two-bell practice comes first; when it is done the level moves on to the real restore.
+                fun nextPinch() {
+                    if (Game.phase != Game.Phase.PRACTICE) {
+                        solve()
+                        return
+                    }
+                    Game.practice?.wanted?.let { Game.pinch(it, Part.MIDDLE, SystemClock.uptimeMillis()) }
+                    main.postDelayed({ nextPinch() }, 500)
+                }
+                nextPinch()
+            }
             Game.Phase.RESTORE -> {
                 fun nextSwap() {
                     val r = Game.restore ?: return

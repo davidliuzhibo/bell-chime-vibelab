@@ -31,6 +31,13 @@ object Rack {
 
     fun tierOf(t: Int) = BELLS.filter { it.tier == t }
 
+    /** As on the original rack: small niu bells on top, yong bells below, one bo in the lowest row. */
+    fun kind(b: Bell): BellKind = when {
+        b.tier == 2 -> BellKind.NIU
+        b.tier == 0 && b.slot == 1 -> BellKind.BO
+        else -> BellKind.YONG
+    }
+
     /**
      * The bell and part that sound [midi]: a bell's middle tone if one has it (the plainest stroke),
      * else a side tone. Null if no bell can.

@@ -127,6 +127,8 @@ fun HallStage() {
         show(PANEL_RESULT, ph == Game.Phase.RESULT)
         show(PANEL_HUD, ph == Game.Phase.TUTORIAL || ph == Game.Phase.RESTORE || ph == Game.Phase.COUNTIN || ph == Game.Phase.SONG || ph == Game.Phase.SHOW)
         show(PANEL_FREE, ph == Game.Phase.FREE)
+        show(PANEL_EXHIBIT, ph == Game.Phase.EXHIBIT)
+        view?.showStuds(ph == Game.Phase.FREE || ph == Game.Phase.TUTORIAL)
         show(PANEL_NOTE, Game.note != null)
         show(PANEL_MENU, true)
     }
@@ -148,7 +150,10 @@ fun HallStage() {
                     if (!i.isDownEvent()) continue
                     val id = v.hitOf(i.targetedEntity) ?: continue
                     val f = id.split(":")
-                    if (f.size == 3 && f[0] == "bell") {
+                    if (f.size == 2 && f[0] == "exhibit") {
+                        val at = i.uptimeMillis
+                        main.post { Game.pinchExhibit(com.vrgames.bianzhong.core.BellKind.valueOf(f[1]), Part.MIDDLE, at) }
+                    } else if (f.size == 3 && f[0] == "bell") {
                         val at = i.uptimeMillis
                         Log.i(INPUT_TAG, "pinch $id at $at")
                         main.post { Game.pinch(f[1].toInt(), if (f[2] == "s") Part.SIDE else Part.MIDDLE, at) }
@@ -164,6 +169,7 @@ fun HallStage() {
             AttachmentPanel(PANEL_FREE) { FreePanel(converter) }
             AttachmentPanel(PANEL_RESULT) { ResultPanel(converter, toggleWindow) }
             AttachmentPanel(PANEL_NOTE) { NotePanel(converter) }
+            AttachmentPanel(PANEL_EXHIBIT) { ExhibitPanel(converter) }
             AttachmentPanel(PANEL_MENU) {
                 MenuPanel(converter, toggleWindow, faceMe = { Game.faceRequest++ }, quit = { context.findActivity()?.finishAndRemoveTask() }, version = appVersion)
             }
@@ -171,7 +177,7 @@ fun HallStage() {
         update = { _, attachments -> view?.let { attach(it, attachments, panels) } },
         initial = { content, attachments ->
             content.addEntity(Entity().apply {
-                components.set(DirectionalLightComponent(Color(0xFFFFE2B8).toColor4(), 700f, true))
+                components.set(DirectionalLightComponent(Color(0xFFFFE2B8).toColor4(), 700f, false))
                 components[TransformComponent::class.java]?.setEulerAngles(EulerAngles(-50f, -25f, 0f))
             })
             val tex = HashMap<String, TextureResource>()
@@ -186,7 +192,7 @@ fun HallStage() {
                     .onFailure { Log.i(TAG, "ibl: ${it.message}") }.getOrNull()
             }
             val models = HashMap<String, Entity>()
-            for (name in MODELS) {
+            for (name in MODELS + PANEL_FRAMES.values.map { "panel_$it" }) {
                 runCatching { Entity.loadSuspend("asset://models/$name.glb") }
                     .onSuccess { models[name] = it }
                     .onFailure { Log.i(TAG, "model $name: ${it.message}") }
@@ -212,7 +218,8 @@ fun HallStage() {
                 val targets = HashMap<Int, Part?>()
                 if (Game.phase == Game.Phase.TUTORIAL) Game.tutorial?.current?.let { targets[it.bell.id] = if (it.damp) null else it.part }
                 if (Game.phase == Game.Phase.RESTORE) Game.restore?.let { r -> r.order.forEach { targets[it] = Part.MIDDLE } }
-                val sel = if (Game.phase == Game.Phase.RESTORE) Game.selected else null
+                if (Game.phase == Game.Phase.PRACTICE) Game.practice?.wanted?.let { targets[it] = Part.MIDDLE }
+                val sel = if (Game.phase == Game.Phase.RESTORE || Game.phase == Game.Phase.PRACTICE) Game.selected else null
                 val key = targets.entries.joinToString { "${it.key}${it.value}" } + "|$sel"
                 if (key != lastOutline) {
                     lastOutline = key
@@ -226,7 +233,9 @@ fun HallStage() {
 
 /** Textures loaded if present (see docs/素材来源.md). */
 private val TEXTURES = listOf("hall", "floor")
-private val MODELS = listOf("sky", "bell", "pillar", "drum", "qing", "mallet", "musician")
+private val MODELS = listOf("sky", "niu", "yong", "bo", "pillar", "rack", "drum", "qing", "mallet", "musician")
+/** Thick bronze plaques behind the card panels (tools/panel3d); [PANEL_SIZES] are their insides. */
+private val PANEL_FRAMES = mapOf(PANEL_CARD to "card", PANEL_INTRO to "intro", PANEL_RESULT to "result", PANEL_EXHIBIT to "exhibit", PANEL_FREE to "free")
 
 private fun attach(v: HallView, a: SpatialViewAttachments, panels: HashMap<String, Entity>) {
     fun put(id: String, pos: Vector3, pitch: Float, yaw: Float = 0f) {
@@ -235,6 +244,7 @@ private fun attach(v: HallView, a: SpatialViewAttachments, panels: HashMap<Strin
         panels[id] = e
         v.root.addChild(e)
         e.setPos(pos)
+        PANEL_FRAMES[id]?.let { name -> v.models["panel_$name"]?.let { frame -> frame.setPos(Vector3(0f, 0f, -0.006f)); e.addChild(frame); v.lightUp(frame) } }
         e.transform().eulerAngles = EulerAngles(pitch, yaw, 0f)
     }
     // Hall frame (the player's feet at the origin, facing -z). Cards at eye height in front of the
@@ -245,6 +255,7 @@ private fun attach(v: HallView, a: SpatialViewAttachments, panels: HashMap<Strin
     put(PANEL_HUD, Vector3(0f, 0.72f, -0.62f), -38f)
     put(PANEL_FREE, Vector3(0f, 0.72f, -0.62f), -38f)
     put(PANEL_NOTE, Vector3(0f, 1.66f, -1.05f), 8f)
+    put(PANEL_EXHIBIT, Vector3(0f, 1.28f, -0.92f), 0f)
     put(PANEL_MENU, Vector3(-0.42f, 0.7f, -0.5f), -40f, 30f)
 }
 

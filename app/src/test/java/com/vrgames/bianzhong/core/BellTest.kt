@@ -101,7 +101,7 @@ class BellTest {
         val pr = Progress()
         assertTrue(pr.open(Levels.ALL[0]))
         assertFalse(pr.open(Levels.ALL[1]))
-        assertFalse(pr.freePlay)
+        assertTrue("free play is open from the start", pr.freePlay)
         for (l in Levels.ALL) pr.record(l.id, 1)
         assertTrue(pr.bronze); assertFalse(pr.silver); assertTrue(pr.freePlay)
         for (l in Levels.ALL.take(3)) pr.record(l.id, 3)

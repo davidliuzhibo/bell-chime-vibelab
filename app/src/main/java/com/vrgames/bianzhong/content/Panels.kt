@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -19,6 +20,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.sp
@@ -29,10 +33,12 @@ import com.pico.spatial.ui.platform.PhysicalLengthConverter
 import com.vrgames.bianzhong.GUIDE_ID
 import com.vrgames.bianzhong.SCORE_ID
 import com.vrgames.bianzhong.core.Judge
+import com.vrgames.bianzhong.core.BellTopics
 import com.vrgames.bianzhong.core.Levels
 import com.vrgames.bianzhong.core.Performance
 import com.vrgames.bianzhong.core.Songs
 import com.vrgames.bianzhong.game.Game
+import kotlin.math.roundToInt
 
 const val PANEL_CARD = "card"
 const val PANEL_INTRO = "intro"
@@ -41,6 +47,7 @@ const val PANEL_FREE = "free"
 const val PANEL_RESULT = "result"
 const val PANEL_MENU = "menu"
 const val PANEL_NOTE = "note"
+const val PANEL_EXHIBIT = "exhibit"
 
 val LabelInk = Color(0xFFF3EBDD)
 val Bronze = Color(0xFFE2B05A)
@@ -65,6 +72,30 @@ private fun PanelBox(c: PhysicalLengthConverter, width: Float, content: @Composa
         Modifier.width(c.m(width)).clip(shape).background(PanelBg).border(c.m(0.0012f), Color(0x66E2B05A), shape).padding(c.m(0.014f)),
         verticalArrangement = Arrangement.spacedBy(c.m(0.007f)),
     ) { content() }
+}
+
+/** Text in the recess of a thick bronze plaque (the frame model is added by the stage); no flat box of its own. */
+@Composable
+private fun Plaque(c: PhysicalLengthConverter, width: Float, height: Float, content: @Composable () -> Unit) {
+    // The plaque's size is fixed by its bronze frame. Its content is measured at full height first; when a line more
+    // (the stars, a longer level text) makes it taller than the plaque, the whole column is scaled down to fit, so the
+    // buttons along the bottom are never pushed out under the frame's edge.
+    Layout(
+        content = { Column(verticalArrangement = Arrangement.spacedBy(c.m(0.007f))) { content() } },
+        modifier = Modifier.width(c.m(width)).height(c.m(height)).padding(horizontal = c.m(0.018f), vertical = c.m(0.008f)),
+    ) { measurables, constraints ->
+        val p = measurables[0].measure(constraints.copy(minWidth = 0, minHeight = 0, maxHeight = Constraints.Infinity))
+        val s = if (p.height > constraints.maxHeight) constraints.maxHeight.toFloat() / p.height else 1f
+        layout(constraints.maxWidth, constraints.maxHeight) {
+            val x = ((constraints.maxWidth - p.width * s) / 2f).roundToInt().coerceAtLeast(0)
+            val y = ((constraints.maxHeight - p.height * s) / 2f).roundToInt().coerceAtLeast(0)
+            p.placeWithLayer(x, y) {
+                scaleX = s
+                scaleY = s
+                transformOrigin = TransformOrigin(0f, 0f)
+            }
+        }
+    }
 }
 
 /** The step that moves the game on, filled in bronze-gold with dark text. */
@@ -97,7 +128,7 @@ private fun stars(n: Int) = "★".repeat(n) + "☆".repeat(3 - n)
 fun CardPanel(c: PhysicalLengthConverter) {
     @Suppress("UNUSED_VARIABLE") val v = Game.version
     val pr = Game.progress
-    PanelBox(c, 0.5f) {
+    Plaque(c, 0.52f, 0.34f) {
         Text("编钟乐坊", fontSize = c.sz(0.034f), color = Bronze)
         Text("你坐在一座先秦宫殿的乐堂里，一架编钟围在身边：上层小钟清脆，中层在眼前，下层大钟低沉。先把乱了的乐坊整理好，再为一场大典演奏。", fontSize = c.sz(0.016f), color = LabelInk)
         Text("怎么玩", fontSize = c.sz(0.018f), color = Jade)
@@ -109,7 +140,8 @@ fun CardPanel(c: PhysicalLengthConverter) {
         Text("集齐星星，乐堂里有三座奖杯等着你。", fontSize = c.sz(0.013f), color = Dim)
         Row(horizontalArrangement = Arrangement.spacedBy(c.m(0.008f)), verticalAlignment = Alignment.CenterVertically) {
             CallToAction(c, if (pr.stars > 0) "继续 →" else "开始 →") { Game.start() }
-            if (pr.freePlay) Pill(c, "自由演奏", Jade) { Game.free() }
+            Pill(c, "自由演奏", Jade) { Game.free() }
+            Pill(c, "认识三种编钟", Bronze) { Game.openExhibit() }
         }
     }
 }
@@ -120,7 +152,7 @@ fun IntroPanel(c: PhysicalLengthConverter) {
     @Suppress("UNUSED_VARIABLE") val v = Game.version
     val l = Game.level
     val s = Game.song
-    PanelBox(c, 0.48f) {
+    Plaque(c, 0.5f, 0.28f) {
         if (l != null) {
             Text(Levels.CHAPTERS[l.chapter], fontSize = c.sz(0.016f), color = Dim)
             Text(l.title, fontSize = c.sz(0.03f), color = Bronze)
@@ -190,7 +222,7 @@ fun HudPanel(c: PhysicalLengthConverter, toggle: (String) -> Unit) {
 @Composable
 fun FreePanel(c: PhysicalLengthConverter) {
     @Suppress("UNUSED_VARIABLE") val v = Game.version
-    PanelBox(c, 0.42f) {
+    Plaque(c, 0.46f, 0.16f) {
         Text("自由演奏", fontSize = c.sz(0.022f), color = Bronze)
         Text(if (Game.recordOn) "录音中：${Game.recording.size} 个音" else if (Game.recording.isNotEmpty()) "已录 ${Game.recording.size} 个音" else "随便敲，录下来再听。", fontSize = c.sz(0.015f), color = LabelInk)
         Row(horizontalArrangement = Arrangement.spacedBy(c.m(0.008f))) {
@@ -207,7 +239,7 @@ fun ResultPanel(c: PhysicalLengthConverter, toggle: (String) -> Unit) {
     @Suppress("UNUSED_VARIABLE") val v = Game.version
     val pr = Game.progress
     val l = Game.level
-    PanelBox(c, 0.48f) {
+    Plaque(c, 0.5f, 0.36f) {
         val title = l?.title ?: Game.song?.title ?: "演奏"
         if (Game.resultStars > 0) {
             Text("$title　${stars(Game.resultStars)}", fontSize = c.sz(0.028f), color = Bronze)
@@ -243,7 +275,8 @@ fun ResultPanel(c: PhysicalLengthConverter, toggle: (String) -> Unit) {
         Row(horizontalArrangement = Arrangement.spacedBy(c.m(0.008f))) {
             if (pr.silver) Pill(c, "隐藏曲目", Jade) { Game.openHidden() }
             if (pr.gold) Pill(c, "大典演出", Bronze) { Game.grandShow() }
-            if (pr.freePlay) Pill(c, "自由演奏", Jade) { Game.free() }
+            Pill(c, "自由演奏", Jade) { Game.free() }
+            Pill(c, "认识三种编钟", Bronze) { Game.openExhibit() }
         }
     }
 }
@@ -306,5 +339,24 @@ fun WindowHeader(id: String, title: String, size: TextUnit) {
         Text(title, fontSize = size, color = Bronze)
         Spacer(Modifier.weight(1f))
         Button(onClick = { Game.closeWindow(id) }) { Text("关闭", fontSize = 22.sp) }
+    }
+}
+
+/** The bell exhibit's plaque: what this kind of bell is, with the recording. */
+@Composable
+fun ExhibitPanel(c: PhysicalLengthConverter) {
+    @Suppress("UNUSED_VARIABLE") val v = Game.version
+    val t = Game.topic
+    Plaque(c, 0.56f, 0.3f) {
+        Text("${Game.topicIndex + 1} / ${BellTopics.ALL.size}　${t.subtitle}", fontSize = c.sz(0.015f), color = Dim)
+        Text(t.title, fontSize = c.sz(0.032f), color = Bronze)
+        Text(t.narration, fontSize = c.sz(0.0165f), color = LabelInk)
+        Row(horizontalArrangement = Arrangement.spacedBy(c.m(0.008f)), verticalAlignment = Alignment.CenterVertically) {
+            if (Game.speaking == t.id) CallToAction(c, "■ 停止讲解") { Game.stopNarration() } else CallToAction(c, "▶ 听讲解") { Game.speak(t.id) }
+            Pill(c, "上一个") { Game.showTopic(Game.topicIndex - 1) }
+            Pill(c, "下一个", Jade) { Game.showTopic(Game.topicIndex + 1) }
+            Pill(c, "返回") { Game.closeExhibit() }
+        }
+        Text("捏一下台上的钟，可以听它的声音。", fontSize = c.sz(0.014f), color = Dim)
     }
 }

@@ -20,6 +20,7 @@ import com.pico.spatial.core.ecs.resource.UnlitMaterial
 import com.pico.spatial.core.math.EulerAngles
 import com.pico.spatial.core.math.Vector3
 import com.vrgames.bianzhong.core.Bell
+import com.vrgames.bianzhong.core.BellKind
 import com.vrgames.bianzhong.core.Note
 import com.vrgames.bianzhong.core.Part
 import com.vrgames.bianzhong.core.Rack
@@ -37,7 +38,7 @@ import kotlin.math.sin
  * and its two sides ("bell:<id>:s"). Strokes swing the bell, flash and show a mallet; coming notes
  * fall as lights onto the bell and the part to strike.
  */
-class HallView(private val models: Map<String, Entity>, private val tex: Map<String, TextureResource>) {
+class HallView(val models: Map<String, Entity>, private val tex: Map<String, TextureResource>) {
     val root = Entity()
     private val hits = HashMap<Entity, String>()
     private val sphere = MeshResource.createSphere(1f).shared()
@@ -66,6 +67,17 @@ class HallView(private val models: Map<String, Entity>, private val tex: Map<Str
     private var drumBob = 0.0
     private var chimeBob = 0.0
     private val uniform = HashSet<Int>()
+    private val pitchMat = unlit(color(1f, 0.78f, 0.25f)).shared()
+    private val studMat = unlit(color(0.75f, 0.58f, 0.25f)).shared()
+    private val sideStudMat = unlit(color(0.3f, 0.6f, 0.85f)).shared()
+    private val cube = MeshResource.createBox(Vector3(1f, 1f, 1f)).shared()
+    private val pitchBars = HashMap<Int, Entity>()
+    /** Small dots on each bell's middle and sides; hovering one lights it, so the aimed part is visible. */
+    private val studs = ArrayList<Entity>()
+    private val exhibit = Entity().apply { enabled = false }
+    private val exhibitBells = HashMap<BellKind, Entity>()
+    private val exhibitRing = model(MeshResource.createTorus(1f, 0.97f), unlit(color(1f, 0.8f, 0.3f)).shared()).apply { enabled = false }
+    private var exhibitSwing = HashMap<BellKind, Double>()
 
     init {
         build()
@@ -108,51 +120,26 @@ class HallView(private val models: Map<String, Entity>, private val tex: Map<Str
         } else {
             root.addChild(model(sphere, unlit(color(0.12f, 0.07f, 0.05f)).apply { setCullingMode(MaterialCullingMode.FRONT) }).apply { setScale(SKY_R) })
         }
+        buildExhibit()
         val floor = tex["floor"]?.let { t ->
             PhysicallyBasedMaterial.create().apply { setBaseColorTexture(t); setEmissiveTexture(t); setEmissiveColor(color(0.3f, 0.3f, 0.3f)); setRoughness(0.55f) }
         } ?: floorMat
         root.addChild(model(MeshResource.createCylinder(0.02f, 3.2f), floor).apply { setPos(Vector3(0f, -0.01f, 0f)) })
-        // The rack: a beam along each tier's arc, posts and bronze swordsmen holding the lowest beam.
+        // The rack's beams and posts are one baked model (tools/build_rack.py), a single draw call;
+        // the bronze swordsmen hold the lowest beam at both ends.
+        models["rack"]?.clone(Entity.CloneOptions(true, true))?.let { root.addChild(it) }
         for (t in 0..2) {
-            val bells = Rack.tierOf(t)
             val (r, spread, top) = TIERS[t]
-            val steps = 14
-            for (k in 0 until steps) {
-                val a0 = Math.toRadians(-spread - 8 + (2 * spread + 16) * k / steps)
-                val a1 = Math.toRadians(-spread - 8 + (2 * spread + 16) * (k + 1) / steps)
-                val mid = (a0 + a1) / 2
-                val len = (2 * r * sin((a1 - a0) / 2)).toFloat() + 0.01f
-                val beam = Entity().apply {
-                    setPos(Vector3((r * sin(mid)).toFloat(), (top + 0.04).toFloat(), (-r * cos(mid)).toFloat()))
-                    transform().eulerAngles = EulerAngles(0f, -Math.toDegrees(mid).toFloat(), 0f)
-                }
-                beam.addChild(model(MeshResource.createBox(Vector3(len, 0.07f, 0.07f), 0.005f), lacquer))
-                beam.addChild(model(MeshResource.createBox(Vector3(len, 0.012f, 0.072f), 0f), redTrim).apply { setPos(Vector3(0f, 0.02f, 0f)) })
-                beam.addChild(model(MeshResource.createBox(Vector3(len, 0.008f, 0.073f), 0f), redTrim).apply { setPos(Vector3(0f, -0.022f, 0f)) })
-                // A bronze sleeve at every joint, as on the original rack.
-                beam.addChild(model(MeshResource.createBox(Vector3(0.05f, 0.085f, 0.085f), 0.008f), bronze).apply { setPos(Vector3(len / 2, 0f, 0f)) })
-                root.addChild(beam)
-            }
-            for (side in listOf(-1, 1)) {
+            if (t == 0) for (side in listOf(-1, 1)) {
                 val a = Math.toRadians(side * (spread + 8))
-                val x = (r * sin(a)).toFloat()
-                val z = (-r * cos(a)).toFloat()
-                if (t == 0) {
-                    val man = models["pillar"]?.clone(Entity.CloneOptions(true, true))
-                    if (man != null) {
-                        man.setScale(top.toFloat() + 0.06f)
-                        man.setPos(Vector3(x, 0f, z))
-                        man.transform().eulerAngles = EulerAngles(0f, -Math.toDegrees(a).toFloat(), 0f)
-                        root.addChild(man)
-                    } else {
-                        root.addChild(model(MeshResource.createCylinder(top.toFloat(), 0.05f), bronze).apply { setPos(Vector3(x, top.toFloat() / 2, z)) })
-                    }
-                } else {
-                    val below = TIERS[t - 1].third
-                    root.addChild(model(MeshResource.createCylinder((top - below).toFloat(), 0.03f), lacquer).apply { setPos(Vector3(x, ((top + below) / 2).toFloat(), z)) })
+                models["pillar"]?.clone(Entity.CloneOptions(true, true))?.let { man ->
+                    man.setScale(top.toFloat() + 0.06f)
+                    man.setPos(Vector3((r * sin(a)).toFloat(), 0f, (-r * cos(a)).toFloat()))
+                    man.transform().eulerAngles = EulerAngles(0f, -Math.toDegrees(a).toFloat(), 0f)
+                    root.addChild(man)
                 }
             }
-            for (b in bells) buildBell(b)
+            for (b in Rack.tierOf(t)) buildBell(b)
         }
         // The musicians: a drummer on the left, a stone-chime player on the right.
         drummer = musician(-1)
@@ -182,7 +169,9 @@ class HallView(private val models: Map<String, Entity>, private val tex: Map<Str
     }
 
     private fun buildBell(b: Bell) {
-        holders[b.id]?.let { old -> hits.keys.removeAll { hitOwnedBy(it, old) }; old.destroy() }
+        // The pitch bar hangs on the holder and is destroyed with it: forget it too, or the next show or clear would touch
+        // a destroyed entity (the crash after the restore level on the headset).
+        holders[b.id]?.let { old -> hits.keys.removeAll { hitOwnedBy(it, old) }; pitchBars.remove(b.id); old.destroy() }
         val (top, yaw) = anchor(b)
         val h = bellHeight(b).toFloat()
         val w = h * WIDTH.toFloat()
@@ -192,7 +181,7 @@ class HallView(private val models: Map<String, Entity>, private val tex: Map<Str
         }
         // A short cord from the beam.
         holder.addChild(model(MeshResource.createCylinder(0.05f, 0.006f), lacquer).apply { setPos(Vector3(0f, 0.01f, 0f)) })
-        val body = models["bell"]?.clone(Entity.CloneOptions(true, true))
+        val body = bellModel(b)
         val swingRoot = Entity()
         if (body != null) {
             // The model stands on its rim, its shank up: hang it so the shank's top meets the cord.
@@ -203,23 +192,95 @@ class HallView(private val models: Map<String, Entity>, private val tex: Map<Str
             swingRoot.addChild(model(MeshResource.createBox(Vector3(w, h * 0.8f, w * 0.6f), 0.02f), bronze).apply { setPos(Vector3(0f, -h * 0.6f, 0f)) })
         }
         holder.addChild(swingRoot)
-        // Pinch targets: the face's middle third and the two outer thirds.
-        fun target(id: String, x: Float, width: Float) = Entity().also {
-            it.setPos(Vector3(x, -h * 0.62f, w * 0.18f))
-            it.components.set(CollisionComponent(listOf(ShapeResource.createBox(Vector3(width, h * 0.78f, w * 0.5f))), PhysicsMaterialResource()))
+        // Pinch targets, wider and taller than the bell itself so a gaze slightly off still lands:
+        // the middle part and the two sides, each with a dot that lights when it is aimed at.
+        fun target(id: String, x: Float, width: Float, side: Boolean) = Entity().also {
+            it.setPos(Vector3(x, -h * 0.6f, w * 0.2f))
+            it.components.set(CollisionComponent(listOf(ShapeResource.createBox(Vector3(width, h * 1.08f, w * 0.8f))), PhysicsMaterialResource()))
             it.components.set(InteractableComponent())
             it.components.set(HoverEffectComponent())
             hits[it] = id
             swingRoot.addChild(it)
+            val stud = model(sphere, if (side) sideStudMat else studMat).apply {
+                setPos(Vector3(if (side) (if (x < 0) w * 0.1f else -w * 0.1f) else 0f, 0f, w * 0.26f))
+                setScale(if (side) 0.0075f else 0.009f)
+                enabled = studsOn
+            }
+            it.addChild(stud)
+            studs += stud
         }
-        target("bell:${b.id}:m", 0f, w * 0.36f)
-        target("bell:${b.id}:s", -w * 0.36f, w * 0.34f)
-        target("bell:${b.id}:s", w * 0.36f, w * 0.34f)
+        target("bell:${b.id}:m", 0f, w * 0.44f, false)
+        target("bell:${b.id}:s", -w * 0.42f, w * 0.40f, true)
+        target("bell:${b.id}:s", w * 0.42f, w * 0.40f, true)
         root.addChild(holder)
         holders[b.id] = holder
         swing[b.id] = 0.0
         receive(holder)
     }
+
+    /** The model for a bell: which kind it is on the original rack. Stands on its rim, height 1. */
+    private fun bellModel(b: Bell): Entity? =
+        (models[Rack.kind(b).model] ?: models["yong"])?.clone(Entity.CloneOptions(true, true))
+
+    private var studsOn = false
+
+    /** The aim dots matter when the part struck matters and no light is falling on it. */
+    fun showStuds(on: Boolean) {
+        if (on == studsOn) return
+        studsOn = on
+        studs.forEach { it.enabled = on }
+    }
+
+    // ---- Pitch bars (the ladder that makes hearing visible) ----
+
+    /** Under a bell just heard: a gold bar whose height is its pitch. It hangs with the bell when swapped. */
+    fun showPitchBar(b: Bell) {
+        val holder = holders[b.id] ?: return
+        val bar = pitchBars.getOrPut(b.id) { model(cube, pitchMat).also { holder.addChild(it) } }
+        val height = (0.05 + (b.main - 67) * 0.012).toFloat().coerceIn(0.03f, 0.24f)
+        bar.transform().setScaleVector(Vector3(0.05f, height, 0.05f))
+        bar.setPos(Vector3(0f, PITCH_BAR_FOOT + height / 2, 0.14f))
+        bar.enabled = true
+    }
+
+    fun clearPitchBars() = pitchBars.values.forEach { it.enabled = false }
+
+    // ---- The exhibit: the three kinds of bell on stands, in front of the player ----
+
+    private fun buildExhibit() {
+        root.addChild(exhibit)
+        exhibit.addChild(exhibitRing)
+        var x = -0.42f
+        for (kind in BellKind.values()) {
+            val h = when (kind) { BellKind.NIU -> 0.26f; BellKind.YONG -> 0.36f; BellKind.BO -> 0.32f }
+            val stand = Entity().apply { setPos(Vector3(x, EXHIBIT_FOOT, EXHIBIT_Z)) }
+            stand.addChild(model(MeshResource.createCylinder(EXHIBIT_FOOT, 0.11f), lacquer).apply { setPos(Vector3(0f, -EXHIBIT_FOOT / 2, 0f)) })
+            stand.addChild(model(MeshResource.createCylinder(0.012f, 0.13f), redTrim).apply { setPos(Vector3(0f, 0f, 0f)) })
+            val swinging = Entity().apply { setPos(Vector3(0f, 0.01f, 0f)) }
+            models[kind.model]?.clone(Entity.CloneOptions(true, true))?.let { it.setScale(h); swinging.addChild(it) }
+            swinging.components.set(CollisionComponent(listOf(ShapeResource.createBox(Vector3(h * 0.9f, h * 1.1f, h * 0.7f)).offsetByTranslation(Vector3(0f, h * 0.5f, 0f))), PhysicsMaterialResource()))
+            swinging.components.set(InteractableComponent())
+            swinging.components.set(HoverEffectComponent())
+            hits[swinging] = "exhibit:${kind.name}"
+            stand.addChild(swinging)
+            exhibit.addChild(stand)
+            exhibitBells[kind] = swinging
+            x += 0.42f
+        }
+    }
+
+    fun showExhibit(on: Boolean, selected: BellKind?) {
+        if (exhibit.enabled != on) exhibit.enabled = on
+        val stand = selected?.let { exhibitBells[it] }?.getParent()
+        exhibitRing.enabled = on && stand != null
+        if (stand != null) {
+            val p = stand.components[com.pico.spatial.core.ecs.TransformComponent::class.java]!!.position
+            exhibitRing.setPos(Vector3(p.x, EXHIBIT_FOOT + 0.014f, p.z))
+            exhibitRing.setScale(0.15f)
+        }
+    }
+
+    fun exhibitStruck(kind: BellKind) { exhibitSwing[kind] = 1.0 }
 
     private fun hitOwnedBy(e: Entity, owner: Entity): Boolean {
         var cur: Entity? = e
@@ -272,7 +333,7 @@ class HallView(private val models: Map<String, Entity>, private val tex: Map<Str
             val holder = holders[id] ?: continue
             val b = Rack.BELLS[id]
             val h = bellHeight(b).toFloat()
-            val body = models["bell"]?.clone(Entity.CloneOptions(true, true))
+            val body = bellModel(b)
             val shell = if (body != null) {
                 body.setScale(h * 1.06f)
                 body.setPos(Vector3(0f, -h * 1.03f, 0f))
@@ -354,6 +415,12 @@ class HallView(private val models: Map<String, Entity>, private val tex: Map<Str
             swing[id] = v
             holders[id]?.getChildren()?.getOrNull(1)?.transform()?.eulerAngles = EulerAngles((v * 4 * sin(clock * 9)).toFloat(), 0f, 0f)
         }
+        for ((kind, s) in exhibitSwing) {
+            if (s <= 0.001) continue
+            val v = s * exp(-dt * 2.2)
+            exhibitSwing[kind] = v
+            exhibitBells[kind]?.transform()?.eulerAngles = EulerAngles((v * 3 * sin(clock * 9)).toFloat(), 0f, 0f)
+        }
         val it = mallets.iterator()
         val keep = ArrayList<Pair<Entity, Double>>()
         while (it.hasNext()) {
@@ -380,6 +447,8 @@ class HallView(private val models: Map<String, Entity>, private val tex: Map<Str
         receive(root)
     }
 
+    fun lightUp(e: Entity) = receive(e)
+
     private fun receive(e: Entity) {
         if (iblSource.components[ImageBasedLightComponent::class.java] == null) return
         if (e.components[ModelComponent::class.java] != null && e.components[ImageBasedLightReceiverComponent::class.java] == null) {
@@ -397,6 +466,10 @@ class HallView(private val models: Map<String, Entity>, private val tex: Map<Str
         const val LEAD = 1.6
         const val FALL = 0.6
         const val SKY_R = 9f
+        /** Where a pitch bar's foot sits, relative to the top of the bell it belongs to. */
+        const val PITCH_BAR_FOOT = -0.62f
+        const val EXHIBIT_FOOT = 0.62f
+        const val EXHIBIT_Z = -0.78f
 
         fun setMaterials(e: Entity, m: Material) {
             e.components[ModelComponent::class.java]?.materials?.let { mats -> for (i in 0 until mats.size) mats[i] = m }

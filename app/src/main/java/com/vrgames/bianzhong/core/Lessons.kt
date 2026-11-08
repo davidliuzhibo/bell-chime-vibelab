@@ -97,6 +97,50 @@ class Restore {
     }
 }
 
+/**
+ * The warm-up before the restore chapter: only two bells, and every step spelled out. Listen to the
+ * left one, listen to the right one, notice the right is lower, then swap them. Exists because the
+ * full puzzle gives no way in for a player who has never compared two pitches by ear.
+ */
+class Practice(private val lowBell: Int, private val highBell: Int) {
+    enum class Step { LISTEN_LEFT, LISTEN_RIGHT, PICK_LOW, PICK_HIGH, DONE }
+
+    /** Bell ids at the two positions, left to right. Starts wrong: the high bell on the left. */
+    val order: MutableList<Int> = mutableListOf(highBell, lowBell)
+    var step = Step.LISTEN_LEFT; private set
+    val done get() = step == Step.DONE
+
+    /** The bell this step wants. */
+    val wanted: Int? get() = when (step) {
+        Step.LISTEN_LEFT -> highBell
+        Step.LISTEN_RIGHT -> lowBell
+        Step.PICK_LOW -> lowBell
+        Step.PICK_HIGH -> highBell
+        Step.DONE -> null
+    }
+
+    val say: String get() = when (step) {
+        Step.LISTEN_LEFT -> "小练习：只有两口钟。先捏发亮的左边这口，听它的音。金色柱子越高，音越高。"
+        Step.LISTEN_RIGHT -> "再捏右边这口。听：它比左边的低，金色柱子也矮。"
+        Step.PICK_LOW -> "规矩是从左到右由低到高，所以这两口要换位置。先捏矮柱子的这口，选中它。"
+        Step.PICK_HIGH -> "再捏另一口：两口钟就交换了位置。"
+        Step.DONE -> "换好了，柱子一级比一级高！正式关一样做：听音、比较、两两交换。"
+    }
+
+    /** A pinch on bell [id]; true if it was the one the step wants. */
+    fun pinch(id: Int): Boolean {
+        if (id != wanted) return false
+        step = when (step) {
+            Step.LISTEN_LEFT -> Step.LISTEN_RIGHT
+            Step.LISTEN_RIGHT -> Step.PICK_LOW
+            Step.PICK_LOW -> Step.PICK_HIGH
+            Step.PICK_HIGH -> { order.reverse(); Step.DONE }
+            Step.DONE -> Step.DONE
+        }
+        return true
+    }
+}
+
 /** The chapters in order, and what the player has earned (best stars per level, trophies). */
 object Levels {
     enum class Kind { TUTORIAL, RESTORE, SONG }
@@ -107,7 +151,7 @@ object Levels {
 
     val ALL = listOf(
         Level("tutorial", 0, "认识编钟", Kind.TUTORIAL, intro = "跟着亮光，学会敲正面、敲侧面和止音。"),
-        Level("restore", 1, "乐坊复原", Kind.RESTORE, intro = "中层有五口钟挂乱了，它们长得一模一样。捏一下钟就能听它的音：把它们从左到右按从低到高换回去。"),
+        Level("restore", 1, "乐坊复原", Kind.RESTORE, intro = "先做一个两口钟的小练习。中层有五口钟挂乱了，它们长得一模一样。捏一下钟就能听它的音：把它们从左到右按从低到高换回去。"),
         Level("twinkle", 2, "小星星", Kind.SONG, Songs.TWINKLE, intro = "光点落到哪口钟上，就在它落下的那一刻敲响。金色敲正面，蓝色敲侧面，白色的圈是止音。"),
         Level("jasmine", 2, "茉莉花", Kind.SONG, Songs.JASMINE, intro = "这首里的“3”是 G 钟的侧面：同一口钟正面、侧面交替。"),
         Level("farewell", 3, "送别", Kind.SONG, Songs.FAREWELL, musicians = true, intro = "鼓和磬的乐师来了。这首要用到下层的大钟，长音的结尾记得止音。"),
@@ -131,9 +175,9 @@ class Progress {
     val silver get() = bronze && stars * 2 >= maxStars
     val gold get() = bronze && stars == maxStars
 
-    /** Levels open in order; free play once the first chapter is done. */
+    /** Levels open in order; free play from the start. */
     fun open(l: Levels.Level) = Levels.ALL.indexOf(l) <= Levels.ALL.indexOfFirst { !cleared(it.id) }.let { if (it < 0) Levels.ALL.size else it }
-    val freePlay get() = cleared("tutorial")
+    val freePlay get() = true
     fun next() = Levels.ALL.firstOrNull { !cleared(it.id) }
 
     fun save(): String = best.entries.joinToString(",") { "${it.key}:${it.value}" }
