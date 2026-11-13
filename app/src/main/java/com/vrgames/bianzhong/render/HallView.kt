@@ -291,7 +291,23 @@ class HallView(val models: Map<String, Entity>, private val tex: Map<String, Tex
         return false
     }
 
+    private var pinchOn = true
+
+    /**
+     * Whether the bells take pinches. Off while a card stands in front of the rack (device test 2026-11-12: pinching the
+     * start button struck a bell of the bottom row behind it instead).
+     */
+    fun pinchable(on: Boolean) {
+        if (on == pinchOn) return
+        pinchOn = on
+        for (e in hits.keys) {
+            if (on) e.components.set(InteractableComponent())
+            else e.components.remove(InteractableComponent::class.java)
+        }
+    }
+
     fun hitOf(e: Entity?): String? {
+        if (!pinchOn) return null
         var cur = e
         while (cur != null) {
             hits[cur]?.let { return it }

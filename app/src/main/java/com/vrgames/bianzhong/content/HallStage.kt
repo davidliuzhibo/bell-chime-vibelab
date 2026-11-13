@@ -104,6 +104,9 @@ fun HallStage() {
         }
         val observer = androidx.lifecycle.LifecycleEventObserver { _, e ->
             if (e == androidx.lifecycle.Lifecycle.Event.ON_RESUME) music.resume() else if (e == androidx.lifecycle.Lifecycle.Event.ON_PAUSE) music.pause()
+            // Home pressed mid-narration: the voice stops with the game (device test 2026-11-12). ON_STOP, as a window of
+            // the game's own opening also pauses the stage.
+            if (e == androidx.lifecycle.Lifecycle.Event.ON_STOP) Game.stopNarration()
         }
         lifecycle.addObserver(observer)
         onDispose {
@@ -129,6 +132,8 @@ fun HallStage() {
         show(PANEL_FREE, ph == Game.Phase.FREE)
         show(PANEL_EXHIBIT, ph == Game.Phase.EXHIBIT)
         view?.showStuds(ph == Game.Phase.FREE || ph == Game.Phase.TUTORIAL)
+        // While a card is up in front of the rack, a pinch is for its buttons, never for a bell behind it.
+        view?.pinchable(ph != Game.Phase.CARD && ph != Game.Phase.INTRO && ph != Game.Phase.RESULT)
         show(PANEL_NOTE, Game.note != null)
         show(PANEL_MENU, true)
     }
